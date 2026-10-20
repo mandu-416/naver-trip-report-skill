@@ -6,7 +6,10 @@ consoles (cp949) crash on Korean text and emoji.
 
 Usage:
   python -I naver_crawl.py search "<query>" --out DIR
-  python -I naver_crawl.py posts DIR/posts.txt [--limit N] --out DIR
+  python -I naver_crawl.py posts DIR/posts.txt [--limit N] [--workers N] --out DIR
+
+Rate limits (HTTP 429) and transient 5xx errors are retried automatically with
+backoff. Avoid launching many script instances in parallel; use --workers.
   python -I naver_crawl.py google "<query>" [--limit N] --out DIR
   python -I naver_crawl.py page <url> --out DIR
 """
@@ -16,6 +19,8 @@ import json
 import os
 import re
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -33,14 +38,33 @@ def api_key():
     return key
 
 
-def call(endpoint, body, timeout=120):
-    req = urllib.request.Request(
-        f"{API}/{endpoint}",
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
+RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+def call(endpoint, body, timeout=120, retries=5):
+    """POST to Firecrawl, retrying rate limits (429) and transient 5xx errors.
+
+    Waits for the server's Retry-After when given, otherwise backs off
+    exponentially (5, 10, 20, 40, 60 s) so parallel runs don't hammer the API.
+    """
+    data = json.dumps(body).encode("utf-8")
+    headers = {"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json"}
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(f"{API}/{endpoint}", data=data, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code not in RETRY_STATUS or attempt == retries:
+                raise
+            retry_after = e.headers.get("Retry-After")
+            wait = int(retry_after) if retry_after and retry_after.isdigit() else min(60, 5 * 2 ** attempt)
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == retries:
+                raise
+            wait = min(60, 5 * 2 ** attempt)
+        sys.stderr.write(f"retry {attempt + 1}/{retries} for {endpoint} in {wait}s\n")
+        time.sleep(wait)
 
 
 def scrape(url):
@@ -90,7 +114,7 @@ def cmd_posts(args):
         except Exception as e:  # keep going on single failures
             return f"fail {url}: {e}"
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as ex:
         for line in ex.map(one, urls):
             print(line)
 
@@ -125,7 +149,7 @@ def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("search"); s.add_argument("query"); s.add_argument("--out", required=True)
-    s = sub.add_parser("posts"); s.add_argument("list"); s.add_argument("--limit", type=int, default=6); s.add_argument("--out", required=True)
+    s = sub.add_parser("posts"); s.add_argument("list"); s.add_argument("--limit", type=int, default=6); s.add_argument("--workers", type=int, default=3); s.add_argument("--out", required=True)
     s = sub.add_parser("google"); s.add_argument("query"); s.add_argument("--limit", type=int, default=6); s.add_argument("--out", required=True)
     s = sub.add_parser("page"); s.add_argument("url"); s.add_argument("--out", required=True)
     args = p.parse_args()

@@ -42,6 +42,7 @@ Things that went wrong before and how the script handles them:
 - `www.naver.com` itself has no travel content. Use `search.naver.com/search.naver?ssc=tab.blog.all&query=...` for the blog tab.
 - Desktop `blog.naver.com` pages are iframes; `m.blog.naver.com/<id>/<postNo>` returns the actual post body.
 - On Windows the console is cp949 and Korean/emoji output crashes `print`. `python -I` also ignores `PYTHONIOENCODING`. The script writes UTF-8 files instead of printing content. Read the files.
+- Firecrawl rate-limits bursts (HTTP 429). The script retries 429/5xx with backoff, but launching many script instances at once still trips the limit; run searches a few at a time and let `posts` parallelize internally (`--workers`, default 3).
 - Some posts are sponsored (affiliate links, "프로모션", coupon blocks). Keep using their facts, but flag them as possibly promotional in the report.
 
 Search several angles in parallel: `<city> 시내 여행코스`, `<city> 쇼핑코스`, `<city> 러닝 코스`, the specific venue name (e.g. `올림픽파크 수영장`), and per-area food queries (`<area> 가성비 맛집 현지인`). For opening hours and prices, prefer the venue's official page; scrape it directly.
