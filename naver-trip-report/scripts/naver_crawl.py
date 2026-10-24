@@ -12,6 +12,11 @@ Rate limits (HTTP 429) and transient 5xx errors are retried automatically with
 backoff. Avoid launching many script instances in parallel; use --workers.
   python -I naver_crawl.py google "<query>" [--limit N] --out DIR
   python -I naver_crawl.py page <url> --out DIR
+  python -I naver_crawl.py prices DIR [DIR ...] --out prices.txt [--context 2]
+      Pull every line that mentions a price (A$, AUD, 달러, 불, 원, $) out of the
+      crawled posts, with a couple of lines before it for the item name, one
+      section per post with its URL. Much faster than reading every post when
+      checking shopping prices.
 """
 import argparse
 import concurrent.futures
@@ -145,6 +150,31 @@ def cmd_page(args):
     print(f"{len(md)} chars -> {path}")
 
 
+PRICE = re.compile(r"(\$\s?\d|\d+(?:\.\d+)?\s?(달러|불|AUD|aud)\b|AUD\s?\$?\d|\d[\d,]*\s?원)")
+
+
+def cmd_prices(args):
+    import glob
+    out, seen = [], set()
+    for d in args.dirs:
+        for f in sorted(glob.glob(os.path.join(d, "**", "*.md"), recursive=True)):
+            name = os.path.basename(f)
+            if name == "search.md" or name in seen:
+                continue
+            seen.add(name)
+            lines = [l.strip() for l in open(f, encoding="utf-8").read().splitlines() if l.strip()]
+            keep = set()
+            for i, l in enumerate(lines):
+                if PRICE.search(l):
+                    keep.update(range(max(0, i - args.context), i + 1))
+            if keep:
+                src = next((l for l in lines[:3] if l.startswith("source:")), name)
+                out.append(f"## {src}")
+                out += [lines[i][:220] for i in sorted(keep)]
+    write(args.out, "\n".join(out))
+    print(f"{len(seen)} posts -> {args.out}")
+
+
 def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -152,8 +182,9 @@ def main():
     s = sub.add_parser("posts"); s.add_argument("list"); s.add_argument("--limit", type=int, default=6); s.add_argument("--workers", type=int, default=3); s.add_argument("--out", required=True)
     s = sub.add_parser("google"); s.add_argument("query"); s.add_argument("--limit", type=int, default=6); s.add_argument("--out", required=True)
     s = sub.add_parser("page"); s.add_argument("url"); s.add_argument("--out", required=True)
+    s = sub.add_parser("prices"); s.add_argument("dirs", nargs="+"); s.add_argument("--context", type=int, default=2); s.add_argument("--out", required=True)
     args = p.parse_args()
-    {"search": cmd_search, "posts": cmd_posts, "google": cmd_google, "page": cmd_page}[args.cmd](args)
+    {"search": cmd_search, "posts": cmd_posts, "google": cmd_google, "page": cmd_page, "prices": cmd_prices}[args.cmd](args)
 
 
 if __name__ == "__main__":

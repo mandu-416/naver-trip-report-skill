@@ -5,7 +5,7 @@ description: Build a time-calculated, day-by-day travel itinerary report from Ko
 
 # Naver trip report
 
-Turn "plan my days in <city>" into a report a traveler can actually follow: every stop has a time, every move has a travel time, every meal has three nearby cheap options with sources, and every day has a map.
+Turn "plan my days in <city>" into a report a traveler can actually follow: every stop has a time, every move has a travel time, every meal has five nearby options with sources and a reservation note, every day has a map, and the shopping list has checked prices.
 
 The workflow below came out of a real planning session. Most of the value is in the order of operations and in the traps it avoids, so follow the order and read the "why" notes.
 
@@ -35,7 +35,7 @@ python -I scripts/naver_crawl.py posts work/course/posts.txt --limit 6 --out wor
 python -I scripts/naver_crawl.py google "cheap eats Haymarket Sydney locals" --out work/food
 ```
 
-`search` scrapes the Naver blog tab and writes `posts.txt` (one `url | title` per line). `posts` scrapes each post through `m.blog.naver.com` and writes cleaned markdown. `google` uses Firecrawl's `/v1/search` and keeps each result's headings, which is usually enough to pull restaurant names, addresses and prices.
+`search` scrapes the Naver blog tab and writes `posts.txt` (one `url | title` per line). For prices, `python -I scripts/naver_crawl.py prices work/shop1 work/shop2 --out work/prices.txt` pulls every price line (A$, AUD, 달러, 불, 원) with two lines of context and the post URL out of the crawled posts, which is much faster than reading every post. `posts` scrapes each post through `m.blog.naver.com` and writes cleaned markdown. `google` uses Firecrawl's `/v1/search` and keeps each result's headings, which is usually enough to pull restaurant names, addresses and prices.
 
 Things that went wrong before and how the script handles them:
 
@@ -57,10 +57,12 @@ For each day, build a table: `시간 | 일정 | 이동 | 메모`. Rules of thumb
 - After a late tour return, next morning starts later; before an early tour, the evening ends early.
 - On the departure day, aim to be at the airport about 3 hours before an international flight and leave hotel luggage in storage; keep that day light.
 - Split shopping across days near where the user already is, and put any store that is closed on later days on the earliest day it's open.
+- **One place, one day.** After the days are drafted, list every place name per day and check for repeats (a harbour dinner on day 1 and again on day 3, the same night walk twice, a second supermarket run). Keep each place on the day where it matters most (e.g. the fireworks night) and give the other days something different nearby. Restaurant lists too: one restaurant should appear under one meal only. Users notice repeats and ask for a full sweep, so do it before they do.
+- When a later change (a show, fireworks, a new stop) is added, re-check the whole day for clothing/rest stops it implies (e.g. back to the hotel to change before a performance) and for the next morning's start time.
 
-## 3. Restaurants: three per meal, along the route
+## 3. Restaurants: five per meal, along the route
 
-For each meal slot in the itinerary, pick three inexpensive places locals actually use, located on or next to that part of the route. Sources: Naver posts by local residents ("현지인", "n년차", "거주"), plus Google results from local food media or official precinct guides. For each: name (Korean + original), location relative to the route, a signature dish with price if a source gives one, and a link to the page you opened. Don't list hours you didn't verify; tell the reader to check Google Maps instead. Avoid weekday traps (e.g. a weekday-only lunch spot on a Saturday).
+For each meal slot in the itinerary, pick five places (mostly inexpensive) locals actually use, located on or next to that part of the route. Sources: Naver posts by local residents ("현지인", "n년차", "거주"), plus Google results from local food media or official precinct guides. For each: name (Korean + original), location relative to the route, a signature dish with price if a source gives one, a reservation column (예약필요 / 예약 권장 + when / 워크인), and a link to the page you opened. Special nights (fireworks, Saturdays near an event) change the reservation note. Don't list hours you didn't verify; tell the reader to check Google Maps instead. Avoid weekday traps (e.g. a weekday-only lunch spot on a Saturday).
 
 ## 4. Write the report
 
@@ -73,10 +75,19 @@ If a document connector (e.g. Claude Docs) is available, write the report there 
 5. One section per day: heading, 1–2 sentence point, the time table, the day's map, a one-line fallback
 6. 이동시간과 교통 table (hotel-based)
 7. 동선별 식당 추천 — a sub-heading per meal slot with its 3-row table
-8. 준비물과 주의사항 (weekday traps, booking needed, passport for duty free, sun protection, etc.)
-9. 출처 list
+8. 쇼핑 리스트 (see step 4a)
+9. 준비물과 주의사항 (weekday traps, booking needed, passport for duty free, sun protection, etc.)
+10. 출처 list
 
 When the user changes a constraint later, search the doc for every place the old value appears (hotel name, walking minutes, station names, "다음 날 05:30 러닝" type cross-references) and update them all, including the summary table and restaurant-location notes.
+
+## 4a. Shopping list
+
+Group it the way people shop: 식품·간식 (supermarket), 영양제·약국, 기념품 by price band (≤5 / 5–15 / 15–40 / 40+ in local currency), 명품·백화점 (what travellers actually buy at local boutiques and department stores, e.g. a Hermès Mini Pop H pendant, with the home-country price for comparison), 옷·신발. Each row: item, price, where (and which day's route passes it), note.
+
+Prices: crawl 4–5 Naver searches (`<city> 쇼핑리스트 가격`, `<city> <brand> 가격`, `<city> 약국 쇼핑리스트`, `<city> 명품 쇼핑`), run `prices` on them, and cross-check with the store's own site or a price tracker. Write sale prices as "sale (regular)" because supermarket and pharmacy chains run frequent half-price weeks, give the year of the price, and list the sources under the section.
+
+Add the money rules that change what people buy: the tourist tax refund rule (e.g. Australia TRS: A$300+ from one store, refund is 1/11 of the price, not 10%), the home-country duty-free allowance and declaration, items banned from import (meat jerky), liquids in checked bags, and paying in local currency rather than KRW.
 
 ## 5. Draw the day maps with Google Flow
 
@@ -85,6 +96,8 @@ See `references/google-flow-maps.md` for the browser procedure and prompt templa
 - One image per day in Google Flow (Nano Banana): numbered red pins in visiting order, a dashed route, a white label card per stop with time + one-line description, orange fork markers for that day's restaurants, a legend, and a title with the date.
 - Nano Banana usually renders labels in English even when you supply Korean. Generate first, pick the better of the two outputs, then send an edit: "keep the map, routes, pins and layout exactly the same; only rewrite all label text in Korean" with the exact label strings. The same edit can fix a misplaced route.
 - Inspect each result for geography errors (pins on the wrong side of a harbour, a route wandering through unrelated streets) and mention any that remain. These are illustrations, not navigation maps; say so under the maps.
+- When the plan changes later, upload the current map to Flow and ask for a whole-stop edit (add a numbered pin, its label card and a dotted walk from an existing pin; or remove a pin and renumber), instead of regenerating the map. Uploading shows a rights dialog that the user must accept themselves. Details in the ai-map-touchup skill's `references/flow-editing.md`.
+- Keep a date-free and a dated version of each map in step: edit one and redraw only the title box for the other.
 - Downloading files requires the user's explicit OK. Once given, download the 1K original of each final image, rename them `day1.jpg`…, and embed each under its day heading (for Claude Docs: upload as an asset of the doc's artifact, create a blob, then `![alt](blob/<id>)`).
 
 ## Privacy
